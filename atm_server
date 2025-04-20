@@ -1,0 +1,159 @@
+from socket import *
+import logging
+import json
+import os
+
+
+class ATMServer:
+    def __init__(self):
+        # Server configuration
+        self.port = 2525
+        self.accounts_file = "accounts.json"
+        self.accounts = self.load_accounts()
+
+        # Setup logging
+        logging.basicConfig(
+            filename='atm_server.log',
+            level=logging.INFO,
+            format='%(asctime)s - %(message)s'
+        )
+
+        # Create server socket
+        self.server_socket = socket(AF_INET, SOCK_STREAM)
+        self.server_socket.bind(('', self.port))
+        self.server_socket.listen(5)
+        print(f"Server started on port {self.port}. Waiting for connections...")
+
+    def load_accounts(self):
+        """Load accounts from JSON file"""
+        if os.path.exists(self.accounts_file):
+            with open(self.accounts_file) as f:
+                return json.load(f)
+        else:
+            # Default accounts if file doesn't exist
+            default_accounts = {
+                "123456": {"password": "1234", "balance": 100000.0},
+                "654321": {"password": "4321", "balance": 50000.0}
+            }
+            with open(self.accounts_file, 'w') as f:
+                json.dump(default_accounts, f)
+            return default_accounts
+
+    def save_accounts(self):
+        """Save accounts to JSON file"""
+        with open(self.accounts_file, 'w') as f:
+            json.dump(self.accounts, f)
+
+    def handle_client(self, connection_socket, addr):
+        """Handle client connection"""
+        current_user = None
+        try:
+            while True:
+                request = connection_socket.recv(1024).decode().strip()
+                if not request:
+                    break
+
+                logging.info(f"Received from {addr}: {request}")
+                parts = request.split(' ')
+                command = parts[0]
+
+                if command == "HELO":
+                    if len(parts) == 2:
+                        userid = parts[1]
+                        if userid in self.accounts:
+                            current_user = userid
+                            response = "500 AUTH REQUIRE"
+                            logging.info(f"User {userid} entered ID")
+                        else:
+                            response = "401 ERROR!"
+                            logging.warning(f"Invalid user ID: {userid}")
+                    else:
+                        response = "401 ERROR!"
+                        logging.warning("Invalid HELO format")
+
+                elif command == "PASS":
+                    if current_user is None:
+                        response = "401 ERROR!"
+                        logging.warning("PASS without HELO")
+                    elif len(parts) == 2:
+                        password = parts[1]
+                        if self.accounts[current_user]["password"] == password:
+                            response = "525 OK!"
+                            logging.info(f"User {current_user} logged in")
+                        else:
+                            response = "401 ERROR!"
+                            logging.warning(f"Wrong password for {current_user}")
+                            current_user = None
+                    else:
+                        response = "401 ERROR!"
+                        logging.warning("Invalid PASS format")
+
+                elif command == "BALA":
+                    if current_user is None:
+                        response = "401 ERROR!"
+                        logging.warning("BALA without login")
+                    else:
+                        balance = self.accounts[current_user]["balance"]
+                        response = f"AMNT:{balance}"
+                        logging.info(f"User {current_user} checked balance")
+
+                elif command == "WDRA":
+                    if current_user is None:
+                        response = "401 ERROR!"
+                        logging.warning("WDRA without login")
+                    elif len(parts) == 2:
+                        try:
+                            amount = float(parts[1])
+                            if amount <= 0:
+                                response = "401 ERROR!"
+                                logging.warning(f"Invalid amount: {amount}")
+                            elif self.accounts[current_user]["balance"] >= amount:
+                                self.accounts[current_user]["balance"] -= amount
+                                self.save_accounts()
+                                response = "525 OK!"
+                                logging.info(f"User {current_user} withdrew {amount}")
+                            else:
+                                response = "401 ERROR!"
+                                logging.warning(f"Insufficient balance for {current_user}")
+                        except ValueError:
+                            response = "401 ERROR!"
+                            logging.warning("Invalid WDRA amount")
+                    else:
+                        response = "401 ERROR!"
+                        logging.warning("Invalid WDRA format")
+
+                elif command == "BYE":
+                    if current_user:
+                        logging.info(f"User {current_user} logged out")
+                    response = "BYE"
+                    break
+
+                else:
+                    response = "401 ERROR!"
+                    logging.warning(f"Unknown command: {command}")
+
+                connection_socket.send(response.encode())
+                logging.info(f"Sent to {addr}: {response}")
+
+        except Exception as e:
+            logging.error(f"Error with {addr}: {e}")
+        finally:
+            connection_socket.close()
+            logging.info(f"Connection closed: {addr}")
+
+    def run(self):
+        """Start the server"""
+        try:
+            while True:
+                connection_socket, addr = self.server_socket.accept()
+                logging.info(f"New connection from {addr}")
+                self.handle_client(connection_socket, addr)
+        except KeyboardInterrupt:
+            print("\nServer shutting down...")
+        finally:
+            self.server_socket.close()
+
+
+if __name__ == "__main__":
+    server = ATMServer()
+    server.run()
