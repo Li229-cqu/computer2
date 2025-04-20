@@ -1,0 +1,224 @@
+from tkinter import *
+from tkinter import ttk, messagebox, simpledialog
+from socket import *
+
+
+class ATMClient:
+    def __init__(self, root):
+        self.root = root
+        self.root.title("ATM Client")
+        self.root.geometry("500x350")
+        self.root.resizable(False, False)
+
+        # Socket connection
+        self.client_socket = None
+        self.server_ip = '192.168.157.248'  # Change to your server IP
+        self.server_port = 2525
+
+        # Current user state
+        self.logged_in = False
+        self.current_user = None
+
+        # Setup UI
+        self.setup_ui()
+
+    def connect_to_server(self):
+        """Establish connection to server"""
+        try:
+            self.client_socket = socket(AF_INET, SOCK_STREAM)
+            self.client_socket.connect((self.server_ip, self.server_port))
+            return True
+        except Exception as e:
+            messagebox.showerror("Connection Error", f"Failed to connect to server: {e}")
+            return False
+
+    def send_request(self, request):
+        """Send request and receive response"""
+        try:
+            self.client_socket.send(request.encode())
+            response = self.client_socket.recv(1024).decode()
+            return response
+        except Exception as e:
+            messagebox.showerror("Error", f"Connection error: {e}")
+            self.close_connection()
+            return None
+
+    def close_connection(self):
+        """Close connection and reset state"""
+        if self.client_socket:
+            self.client_socket.close()
+            self.client_socket = None
+        self.logged_in = False
+        self.current_user = None
+
+    def handle_helo(self):
+        """Handle HELO command"""
+        if not self.client_socket and not self.connect_to_server():
+            return
+
+        userid = self.entry_userid.get().strip()
+        if not userid:
+            self.update_feedback("User ID cannot be empty.")
+            return
+
+        request = f"HELO {userid}"
+        response = self.send_request(request)
+
+        if response == "500 AUTH REQUIRE":
+            self.current_user = userid
+            self.update_feedback("Please enter your password.")
+            self.show_password_input()
+        else:
+            self.update_feedback("Invalid User ID.")
+            self.entry_userid.delete(0, END)
+
+    def handle_pass(self):
+        """Handle PASS command"""
+        password = self.entry_password.get().strip()
+        if not password:
+            self.update_feedback("Password cannot be empty.")
+            return
+
+        request = f"PASS {password}"
+        response = self.send_request(request)
+
+        if response == "525 OK!":
+            self.logged_in = True
+            self.update_feedback("Login successful.")
+            self.show_main_interface()
+        else:
+            self.update_feedback("Invalid password.")
+            self.entry_password.delete(0, END)
+
+    def check_balance(self):
+        """Handle BALA command"""
+        if not self.logged_in:
+            self.update_feedback("Please login first.")
+            return
+
+        response = self.send_request("BALA")
+        if response.startswith("AMNT:"):
+            balance = response.split(":")[1]
+            self.update_feedback(f"Current balance: {balance}")
+        else:
+            self.update_feedback("Failed to check balance.")
+
+    def withdraw(self):
+        """Handle WDRA command"""
+        if not self.logged_in:
+            self.update_feedback("Please login first.")
+            return
+
+        amount = simpledialog.askfloat("Withdraw", "Enter amount to withdraw:")
+        if amount is None or amount <= 0:
+            return
+
+        request = f"WDRA {amount}"
+        response = self.send_request(request)
+
+        if response == "525 OK!":
+            self.update_feedback(f"Withdrawal of {amount} successful.")
+        elif response == "401 ERROR!":
+            self.update_feedback("Withdrawal failed. Insufficient balance.")
+        else:
+            self.update_feedback("Withdrawal failed.")
+
+    def logout(self):
+        """Handle BYE command"""
+        if self.logged_in:
+            response = self.send_request("BYE")
+            if response == "BYE":
+                self.update_feedback("Logged out successfully.")
+        self.close_connection()
+        self.show_login_interface()
+
+    # ---------- UI Methods ----------
+    def setup_ui(self):
+        """Initialize user interface"""
+        style = ttk.Style()
+        style.theme_use("clam")
+        style.configure("TFrame", background="#f0f0f0")
+        style.configure("TLabel", background="#f0f0f0", font=("Arial", 12))
+        style.configure("TButton", font=("Arial", 12), padding=5)
+
+        # Login frame
+        self.frame_login = ttk.Frame(self.root, padding="20")
+        self.label_userid = ttk.Label(self.frame_login, text="User ID:")
+        self.entry_userid = ttk.Entry(self.frame_login)
+        self.button_helo = ttk.Button(self.frame_login, text="Submit", command=self.handle_helo)
+        self.label_feedback = ttk.Label(self.frame_login, text="", foreground="red")
+
+        # Password frame (initially hidden)
+        self.label_password = ttk.Label(self.frame_login, text="Password:")
+        self.entry_password = ttk.Entry(self.frame_login, show="*")
+        self.button_pass = ttk.Button(self.frame_login, text="Login", command=self.handle_pass)
+
+        # Main operation frame (initially hidden)
+        self.frame_main = ttk.Frame(self.root, padding="20")
+        self.button_balance = ttk.Button(self.frame_main, text="Check Balance", command=self.check_balance)
+        self.button_withdraw = ttk.Button(self.frame_main, text="Withdraw", command=self.withdraw)
+        self.button_logout = ttk.Button(self.frame_main, text="Logout", command=self.logout)
+        self.label_main_feedback = ttk.Label(self.frame_main, text="", foreground="blue")
+
+        # Layout login frame
+        self.label_userid.grid(row=0, column=0, padx=5, pady=5)
+        self.entry_userid.grid(row=0, column=1, padx=5, pady=5)
+        self.button_helo.grid(row=1, column=0, columnspan=2, pady=10)
+        self.label_feedback.grid(row=2, column=0, columnspan=2)
+
+        # Show login frame by default
+        self.frame_login.pack()
+
+    def show_password_input(self):
+        """Show password input fields"""
+        self.label_userid.grid_remove()
+        self.entry_userid.grid_remove()
+        self.button_helo.grid_remove()
+
+        self.label_password.grid(row=0, column=0, padx=5, pady=5)
+        self.entry_password.grid(row=0, column=1, padx=5, pady=5)
+        self.button_pass.grid(row=1, column=0, columnspan=2, pady=10)
+        self.entry_password.focus_set()
+
+    def show_main_interface(self):
+        """Show main operation interface"""
+        self.frame_login.pack_forget()
+        self.frame_main.pack()
+
+        self.button_balance.grid(row=0, column=0, padx=10, pady=10)
+        self.button_withdraw.grid(row=0, column=1, padx=10, pady=10)
+        self.button_logout.grid(row=1, column=0, columnspan=2, pady=10)
+        self.label_main_feedback.grid(row=2, column=0, columnspan=2)
+
+    def show_login_interface(self):
+        """Show login interface"""
+        self.frame_main.pack_forget()
+        self.frame_login.pack()
+
+        # Reset UI state
+        self.label_userid.grid(row=0, column=0, padx=5, pady=5)
+        self.entry_userid.grid(row=0, column=1, padx=5, pady=5)
+        self.button_helo.grid(row=1, column=0, columnspan=2, pady=10)
+        self.label_feedback.grid(row=2, column=0, columnspan=2)
+
+        self.label_password.grid_remove()
+        self.entry_password.grid_remove()
+        self.button_pass.grid_remove()
+
+        self.entry_userid.delete(0, END)
+        self.entry_password.delete(0, END)
+        self.update_feedback("")
+
+    def update_feedback(self, message):
+        """Update feedback message"""
+        if self.logged_in:
+            self.label_main_feedback.config(text=message)
+        else:
+            self.label_feedback.config(text=message)
+
+
+# Start the application
+if __name__ == "__main__":
+    root = Tk()
+    app = ATMClient(root)
+    root.mainloop()
