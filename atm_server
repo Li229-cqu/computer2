@@ -6,132 +6,125 @@ import os
 
 class ATMServer:
     def __init__(self):
-        # Server configuration
+        # 服务器配置
         self.port = 2525
-        self.accounts_file = "accounts.json"
-        self.accounts = self.load_accounts()
+        self.accounts_file = "accounts.json"  # 账户数据文件
+        self.accounts = self.load_accounts()  # 加载账户数据
 
-        # Setup logging
+        # 配置日志记录
         logging.basicConfig(
             filename='atm_server.log',
             level=logging.INFO,
             format='%(asctime)s - %(message)s'
         )
 
-        # Create server socket
+        # 创建服务器socket
         self.server_socket = socket(AF_INET, SOCK_STREAM)
         self.server_socket.bind(('', self.port))
         self.server_socket.listen(5)
         print(f"Server started on port {self.port}. Waiting for connections...")
 
     def load_accounts(self):
-        """Load accounts from JSON file"""
-        if os.path.exists(self.accounts_file):
-            with open(self.accounts_file) as f:
-                return json.load(f)
-        else:
-            # Default accounts if file doesn't exist
-            default_accounts = {
-                "123456": {"password": "1234", "balance": 100000.0},
-                "654321": {"password": "4321", "balance": 50000.0}
-            }
-            with open(self.accounts_file, 'w') as f:
-                json.dump(default_accounts, f)
-            return default_accounts
+        """从JSON文件加载账户数据"""
+        with open(self.accounts_file) as f:
+            return json.load(f)
 
     def save_accounts(self):
-        """Save accounts to JSON file"""
+        """保存账户数据到JSON文件"""
         with open(self.accounts_file, 'w') as f:
             json.dump(self.accounts, f)
 
     def handle_client(self, connection_socket, addr):
-        """Handle client connection"""
-        current_user = None
+        """处理客户端连接"""
+        current_user = None  # 当前登录用户
         try:
             while True:
+                # 接收客户端请求
                 request = connection_socket.recv(1024).decode().strip()
                 if not request:
                     break
 
                 logging.info(f"Received from {addr}: {request}")
                 parts = request.split(' ')
-                command = parts[0]
+                command = parts[0]  # 提取命令
 
-                if command == "HELO":
+                # 处理不同命令
+                if command == "HELO":  # 用户登录(第一步)
                     if len(parts) == 2:
                         userid = parts[1]
                         if userid in self.accounts:
                             current_user = userid
-                            response = "500 AUTH REQUIRE"
+                            response = "500 AUTH REQUIRE"  # 需要密码
                             logging.info(f"User {userid} entered ID")
                         else:
-                            response = "401 ERROR!"
+                            response = "401 ERROR!"  # 用户不存在
                             logging.warning(f"Invalid user ID: {userid}")
                     else:
-                        response = "401 ERROR!"
+                        response = "401 ERROR!"  # 格式错误
                         logging.warning("Invalid HELO format")
 
-                elif command == "PASS":
+                elif command == "PASS":  # 密码验证
                     if current_user is None:
-                        response = "401 ERROR!"
+                        response = "401 ERROR!"  # 未先提供用户名
                         logging.warning("PASS without HELO")
                     elif len(parts) == 2:
                         password = parts[1]
                         if self.accounts[current_user]["password"] == password:
-                            response = "525 OK!"
+                            response = "525 OK!"  # 登录成功
                             logging.info(f"User {current_user} logged in")
                         else:
-                            response = "401 ERROR!"
+                            response = "401 ERROR!"  # 密码错误
                             logging.warning(f"Wrong password for {current_user}")
                             current_user = None
                     else:
-                        response = "401 ERROR!"
+                        response = "401 ERROR!"  # 格式错误
                         logging.warning("Invalid PASS format")
 
-                elif command == "BALA":
+                elif command == "BALA":  # 查询余额
                     if current_user is None:
-                        response = "401 ERROR!"
+                        response = "401 ERROR!"  # 未登录
                         logging.warning("BALA without login")
                     else:
                         balance = self.accounts[current_user]["balance"]
-                        response = f"AMNT:{balance}"
+                        response = f"AMNT:{balance}"  # 返回余额
                         logging.info(f"User {current_user} checked balance")
 
-                elif command == "WDRA":
+                elif command == "WDRA":  # 取款操作
                     if current_user is None:
-                        response = "401 ERROR!"
+                        response = "401 ERROR!"  # 未登录
                         logging.warning("WDRA without login")
                     elif len(parts) == 2:
                         try:
                             amount = float(parts[1])
                             if amount <= 0:
-                                response = "401 ERROR!"
+                                response = "401 ERROR!"  # 金额无效
                                 logging.warning(f"Invalid amount: {amount}")
                             elif self.accounts[current_user]["balance"] >= amount:
                                 self.accounts[current_user]["balance"] -= amount
                                 self.save_accounts()
-                                response = "525 OK!"
+                                response = "525 OK!"  # 取款成功
                                 logging.info(f"User {current_user} withdrew {amount}")
                             else:
-                                response = "401 ERROR!"
+                                response = "401 ERROR!"  # 余额不足
                                 logging.warning(f"Insufficient balance for {current_user}")
                         except ValueError:
-                            response = "401 ERROR!"
+                            response = "401 ERROR!"  # 金额格式错误
                             logging.warning("Invalid WDRA amount")
                     else:
-                        response = "401 ERROR!"
+                        response = "401 ERROR!"  # 格式错误
                         logging.warning("Invalid WDRA format")
 
-                elif command == "BYE":
+                elif command == "BYE":  # 退出命令
                     if current_user:
                         logging.info(f"User {current_user} logged out")
-                    response = "BYE"
+                    response = "BYE"  # 退出确认
                     break
 
                 else:
-                    response = "401 ERROR!"
+                    response = "401 ERROR!"  # 未知命令
                     logging.warning(f"Unknown command: {command}")
 
+                # 发送响应给客户端
                 connection_socket.send(response.encode())
                 logging.info(f"Sent to {addr}: {response}")
 
@@ -142,7 +135,7 @@ class ATMServer:
             logging.info(f"Connection closed: {addr}")
 
     def run(self):
-        """Start the server"""
+        """启动服务器主循环"""
         try:
             while True:
                 connection_socket, addr = self.server_socket.accept()
